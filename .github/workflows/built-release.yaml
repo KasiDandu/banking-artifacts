@@ -47,7 +47,7 @@ jobs:
 
       - name: Build glue-common.zip (common/ shipped via Glue --extra-py-files)
         run: |
-          cd banking-data/common && zip -r ../../glue-common.zip . -x '*.pyc' && cd ../..
+          cd banking-data && zip -r ../glue-common.zip common -x '*.pyc' && cd ..
 
       - name: Compute sha256 hashes
         id: hash

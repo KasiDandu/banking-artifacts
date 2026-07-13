@@ -11,6 +11,37 @@ import datetime as dt
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
+from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
+
+# Explicit schema so a single-row DataFrame never has to infer types -- several fields
+# (rejected_s3_path, error_message, validation_error_summary, ...) are None on a normal run,
+# and Spark can't infer a type from None alone with only one row.
+_LINEAGE_SCHEMA = StructType(
+    [
+        StructField("run_id", StringType(), True),
+        StructField("source_name", StringType(), True),
+        StructField("raw_s3_bucket", StringType(), True),
+        StructField("raw_s3_key", StringType(), True),
+        StructField("config_s3_key", StringType(), True),
+        StructField("load_mode", StringType(), True),
+        StructField("target_s3_path", StringType(), True),
+        StructField("target_database", StringType(), True),
+        StructField("target_table", StringType(), True),
+        StructField("glue_job_name", StringType(), True),
+        StructField("glue_job_run_id", StringType(), True),
+        StructField("started_at", StringType(), True),
+        StructField("rows_read", LongType(), True),
+        StructField("rows_valid", LongType(), True),
+        StructField("rows_rejected", LongType(), True),
+        StructField("rejected_s3_path", StringType(), True),
+        StructField("finished_at", StringType(), True),
+        StructField("duration_seconds", DoubleType(), True),
+        StructField("status", StringType(), True),
+        StructField("error_message", StringType(), True),
+        StructField("validation_error_summary", StringType(), True),
+    ]
+)
+
 
 @dataclass
 class LineageRecord:
@@ -53,6 +84,8 @@ def write_lineage_record(spark, record: LineageRecord, lineage_base_path: str, r
         f"{lineage_base_path.rstrip('/')}/source={record.source_name}"
         f"/dt={run_date}/run_id={record.run_id}"
     )
-    df = spark.createDataFrame([record.to_dict()])
+    record_dict = record.to_dict()
+    row = tuple(record_dict.get(field.name) for field in _LINEAGE_SCHEMA.fields)
+    df = spark.createDataFrame([row], schema=_LINEAGE_SCHEMA)
     df.write.mode("overwrite").parquet(target_path)
     return target_path
