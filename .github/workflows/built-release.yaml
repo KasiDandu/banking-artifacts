@@ -1,0 +1,127 @@
+name: Build & Release
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+
+jobs:
+  build:
+    name: Build immutable (sha256) artifacts
+    runs-on: ubuntu-latest
+    outputs:
+      lambda_sha256: ${{ steps.hash.outputs.lambda_sha256 }}
+      glue_sha256: ${{ steps.hash.outputs.glue_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure zip is available
+        run: which zip || (sudo apt-get update && sudo apt-get install -y zip)
+
+      - name: Build lambda.zip (lambda handler + shared common/ code)
+        run: |
+          mkdir -p dist
+          cp banking-data/lambda/lambda_function.py dist/
+          cp -r banking-data/common dist/common
+          cd dist && zip -r ../lambda.zip . -x '*.pyc' && cd ..
+
+      - name: Build glue-common.zip (common/ shipped via Glue --extra-py-files)
+        run: |
+          cd banking-data/common && zip -r ../../glue-common.zip . -x '*.pyc' && cd ../..
+
+      - name: Compute sha256 hashes
+        id: hash
+        run: |
+          LAMBDA_SHA=$(sha256sum lambda.zip | cut -d' ' -f1)
+          GLUE_SHA=$(sha256sum banking-data/glue/glue_script.py | cut -d' ' -f1)
+          echo "lambda_sha256=$LAMBDA_SHA" >> "$GITHUB_OUTPUT"
+          echo "glue_sha256=$GLUE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ARTIFACT_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload immutable, content-addressed artifacts
+        run: |
+          aws s3 cp lambda.zip \
+            "s3://${ARTIFACT_BUCKET}/lambda/sha256/${{ steps.hash.outputs.lambda_sha256 }}/lambda.zip"
+          aws s3 cp banking-data/glue/glue_script.py \
+            "s3://${ARTIFACT_BUCKET}/glue/sha256/${{ steps.hash.outputs.glue_sha256 }}/glue_script.py"
+          aws s3 cp glue-common.zip \
+            "s3://${ARTIFACT_BUCKET}/glue/sha256/${{ steps.hash.outputs.glue_sha256 }}/glue-common.zip"
+
+  release:
+    name: Tag semantic version & publish release artifacts
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next semantic version
+        id: semver
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "v"
+          major_pattern: "(MAJOR)"
+          minor_pattern: "(MINOR)"
+          version_format: "${major}.${minor}.${patch}"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ARTIFACT_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Promote sha256 artifacts to a semantic version + write manifest
+        env:
+          VERSION: v${{ steps.semver.outputs.version }}
+          LAMBDA_SHA: ${{ needs.build.outputs.lambda_sha256 }}
+          GLUE_SHA: ${{ needs.build.outputs.glue_sha256 }}
+        run: |
+          aws s3 cp "s3://${ARTIFACT_BUCKET}/lambda/sha256/${LAMBDA_SHA}/lambda.zip" \
+            "s3://${ARTIFACT_BUCKET}/lambda/${VERSION}/lambda.zip"
+          aws s3 cp "s3://${ARTIFACT_BUCKET}/glue/sha256/${GLUE_SHA}/glue_script.py" \
+            "s3://${ARTIFACT_BUCKET}/glue/${VERSION}/glue_script.py"
+          aws s3 cp "s3://${ARTIFACT_BUCKET}/glue/sha256/${GLUE_SHA}/glue-common.zip" \
+            "s3://${ARTIFACT_BUCKET}/glue/${VERSION}/glue-common.zip"
+
+          cat > manifest.json <<EOF
+          {
+            "version": "${VERSION}",
+            "sha256_lambda": "${LAMBDA_SHA}",
+            "sha256_glue": "${GLUE_SHA}",
+            "s3_lambda_key": "lambda/${VERSION}/lambda.zip",
+            "s3_glue_key": "glue/${VERSION}/glue_script.py",
+            "s3_glue_common_key": "glue/${VERSION}/glue-common.zip",
+            "commit_sha": "${{ github.sha }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          aws s3 cp manifest.json "s3://${ARTIFACT_BUCKET}/manifest/${VERSION}.json"
+          aws s3 cp manifest.json "s3://${ARTIFACT_BUCKET}/manifest/latest.json"
+
+      - name: Tag & create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: v${{ steps.semver.outputs.version }}
+        run: |
+          git tag "$VERSION"
+          git push origin "$VERSION"
+          gh release create "$VERSION" manifest.json --title "$VERSION" --generate-notes

@@ -1,0 +1,5 @@
+customer_id,first_name,last_name,date_of_birth,address,city,state,zip
+1,John,Doe,1985-04-12,123 Main St,Springfield,IL,62701
+2,Jane,Smith,1990-11-02,456 Oak Ave,Madison,WI,53703
+bad,Bob,NoId,1975-01-01,789 Pine Rd,Austin,TX,73301
+3,,Lee,1988-06-30,321 Elm St,Reno,NV,89501

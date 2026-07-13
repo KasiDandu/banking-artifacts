@@ -1,0 +1,7 @@
+# Local/test-only dependencies. The Lambda runtime provides boto3; AWS Glue provides pyspark
+# and boto3 in its job environment -- these are only needed to run `pytest` locally.
+# pyspark pinned to match the Spark version bundled with Glue 4.0 (see glue.json's glue_version
+# in banking-infra) so local test behavior matches the deployed job.
+pyspark==3.3.2
+pytest==8.3.3
+boto3==1.35.36

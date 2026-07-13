@@ -1,0 +1,25 @@
+{
+  "source_name": "customers",
+  "raw_key_prefix": "raw/customers/",
+  "file_format": "csv",
+  "csv_options": { "delimiter": ",", "header": true },
+  "schema": [
+    { "name": "customer_id", "dtype": "int", "nullable": false },
+    { "name": "first_name", "dtype": "string", "nullable": false },
+    { "name": "last_name", "dtype": "string", "nullable": false },
+    { "name": "date_of_birth", "dtype": "date", "nullable": true },
+    { "name": "address", "dtype": "string", "nullable": true },
+    { "name": "city", "dtype": "string", "nullable": true },
+    { "name": "state", "dtype": "string", "nullable": true },
+    { "name": "zip", "dtype": "string", "nullable": true }
+  ],
+  "target": {
+    "database": "banking_data",
+    "table": "customers",
+    "s3_prefix": "processed/customers/",
+    "load_mode": "upsert",
+    "primary_keys": ["customer_id"],
+    "version_column": "_ingested_at"
+  },
+  "crawler": { "name": "banking-data-customers-crawler" }
+}
