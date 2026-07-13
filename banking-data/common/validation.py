@@ -23,12 +23,31 @@ _DTYPE_MAP: dict[str, T.DataType] = {
     "boolean": T.BooleanType(),
 }
 
+# SQL type names for try_cast(), kept separate from _DTYPE_MAP's DataType objects since e.g.
+# "float" (config) intentionally maps to Spark SQL's "double", not its distinct "float" type.
+_SQL_TYPE_NAME: dict[str, str] = {
+    "int": "int",
+    "long": "bigint",
+    "float": "double",
+    "double": "double",
+    "string": "string",
+    "date": "date",
+    "boolean": "boolean",
+}
+
 
 def spark_type_for(dtype: str) -> T.DataType:
     try:
         return _DTYPE_MAP[dtype]
     except KeyError as exc:
         raise ValueError(f"Unsupported dtype '{dtype}'; supported: {sorted(_DTYPE_MAP)}") from exc
+
+
+def _sql_type_name_for(dtype: str) -> str:
+    try:
+        return _SQL_TYPE_NAME[dtype]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported dtype '{dtype}'; supported: {sorted(_SQL_TYPE_NAME)}") from exc
 
 
 def validate_dataframe(raw_df: DataFrame, schema: list[dict[str, Any]]) -> tuple[DataFrame, DataFrame]:
@@ -47,7 +66,11 @@ def validate_dataframe(raw_df: DataFrame, schema: list[dict[str, Any]]) -> tuple
 
         raw_col = F.col(name)
         is_blank = raw_col.isNull() | (F.trim(raw_col) == F.lit(""))
-        cast_col = F.trim(raw_col).cast(spark_type_for(dtype))
+        # try_cast (not cast/.cast()) so a malformed value yields NULL -- and gets reported as
+        # a normal validation error -- instead of raising and aborting the whole job. Plain
+        # .cast() only has that NULL-on-failure behavior when ANSI mode is off, which isn't
+        # guaranteed across Spark versions (e.g. Spark 4.x defaults ANSI on).
+        cast_col = F.expr(f"try_cast(trim(`{name}`) as {_sql_type_name_for(dtype)})")
         cast_failed = (~is_blank) & cast_col.isNull()
 
         df = df.withColumn(f"_cast_{name}", cast_col)

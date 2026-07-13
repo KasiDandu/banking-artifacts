@@ -1,5 +1,6 @@
 import pytest
 from common.validation import validate_dataframe
+from pyspark.sql.types import StringType, StructField, StructType
 
 SCHEMA = [
     {"name": "account_id", "dtype": "int", "nullable": False},
@@ -12,9 +13,20 @@ SCHEMA = [
     {"name": "balance", "dtype": "float", "nullable": False},
 ]
 
+# Raw CSV columns are always strings pre-cast, so build the DataFrame with an explicit
+# all-string schema rather than letting Spark infer types -- inference can't determine a type
+# for a column whose only value in the batch is None.
+_RAW_SCHEMA = StructType(
+    [
+        StructField("account_id", StringType(), True),
+        StructField("account_type", StringType(), True),
+        StructField("balance", StringType(), True),
+    ]
+)
+
 
 def _raw_df(spark, rows):
-    return spark.createDataFrame(rows, ["account_id", "account_type", "balance"])
+    return spark.createDataFrame(rows, _RAW_SCHEMA)
 
 
 def test_valid_rows_pass_through(spark):
