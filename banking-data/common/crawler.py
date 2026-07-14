@@ -2,7 +2,7 @@
 
 Ownership split with Terraform: the crawler *resource* is managed here, dynamically, per the
 scenario's "create if not exists else refresh" requirement -- Terraform only provisions the
-crawler's IAM role (see banking-infra/terraform/modules/banking-data/iam.tf) so Terraform and the
+crawler's IAM role (see banking-terraform/terraform/modules/iam) so Terraform and the
 running Glue job never fight over the same AWS resource.
 """
 from __future__ import annotations

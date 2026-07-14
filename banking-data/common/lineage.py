@@ -3,13 +3,13 @@
 One `LineageRecord` is written per Glue job run to
 `<lineage_base_path>/source=<name>/dt=<run_date>/run_id=<id>.parquet`, matching the Hive-style
 partitioning of the fixed `banking_data.audit_lineage` Glue Catalog table (see
-banking-infra/terraform/modules/banking-data/glue.tf) so it's queryable from Athena.
+banking-terraform/terraform/modules/banking-data/main.tf) so it's queryable from Athena.
 """
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import Any
 
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
 
@@ -60,14 +60,14 @@ class LineageRecord:
     rows_read: int = 0
     rows_valid: int = 0
     rows_rejected: int = 0
-    rejected_s3_path: Optional[str] = None
-    finished_at: Optional[str] = None
-    duration_seconds: Optional[float] = None
+    rejected_s3_path: str | None = None
+    finished_at: str | None = None
+    duration_seconds: float | None = None
     status: str = "RUNNING"
-    error_message: Optional[str] = None
-    validation_error_summary: Optional[str] = None
+    error_message: str | None = None
+    validation_error_summary: str | None = None
 
-    def mark_finished(self, status: str, error_message: Optional[str] = None) -> None:
+    def mark_finished(self, status: str, error_message: str | None = None) -> None:
         finished = dt.datetime.now(dt.timezone.utc)
         self.finished_at = finished.isoformat()
         self.status = status

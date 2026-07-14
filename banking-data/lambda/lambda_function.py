@@ -1,15 +1,17 @@
-"""EventBridge (CloudTrail S3 data-event) handler.
+"""EventBridge (native S3 "Object Created" notification) handler.
 
-Triggered by an EventBridge rule matching "AWS API Call via CloudTrail" PutObject /
-CompleteMultipartUpload events against the raw landing bucket. Derives the source name from the
-object key convention `raw/<source_name>/<file>`, resolves that source's config object in the
+Triggered by an EventBridge rule matching S3's native "Object Created" notifications (enabled
+directly on the landing bucket, see the buckets module's aws_s3_bucket_notification -- no
+CloudTrail data events trail needed) against the raw landing bucket. Derives the source name from
+the object key convention `raw/<source_name>/<file>`, resolves that source's config object in the
 config bucket, and starts the Glue ETL job with the run's identifying parameters.
 
-Bucket/job names are injected as Lambda environment variables by Terraform
-(banking-infra/terraform/modules/banking-data/lambda.tf), not looked up via SSM at request time
--- Terraform already knows these values at deploy time, so a runtime SSM GetParameter call would
-just add latency and an extra IAM permission for no benefit. The same values are also published
-to SSM Parameter Store (ssm.tf) for other consumers/operational visibility.
+CONFIG_BUCKET and GLUE_JOB_NAME are resolved at cold start from the SSM parameters the buckets and
+banking-data Terraform modules publish (/<project>/<env>/buckets/config and
+/<project>/<env>/glue_jobs/<key>) -- not passed as Lambda environment variables directly. This
+decouples this function from needing to be redeployed whenever a bucket or Glue job is renamed;
+Terraform only injects PROJECT_NAME/ENVIRONMENT/GLUE_JOB_KEY, which identify *which* parameters to
+read, not the values themselves.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ import logging
 import os
 import uuid
 from typing import Any
+from urllib.parse import unquote_plus
 
 import boto3
 from botocore.exceptions import ClientError
@@ -26,11 +29,21 @@ logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
 s3_client = boto3.client("s3")
 glue_client = boto3.client("glue")
+ssm_client = boto3.client("ssm")
 
-CONFIG_BUCKET = os.environ["CONFIG_BUCKET"]
-GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
+PROJECT_NAME = os.environ["PROJECT_NAME"]
+ENVIRONMENT = os.environ["ENVIRONMENT"]
+GLUE_JOB_KEY = os.environ["GLUE_JOB_KEY"]
 RAW_KEY_PREFIX = os.environ.get("RAW_KEY_PREFIX", "raw/")
 CONFIG_KEY_PREFIX = os.environ.get("CONFIG_KEY_PREFIX", "config/")
+
+
+def _ssm_parameter(name: str) -> str:
+    return ssm_client.get_parameter(Name=name)["Parameter"]["Value"]
+
+
+CONFIG_BUCKET = _ssm_parameter(f"/{PROJECT_NAME}/{ENVIRONMENT}/buckets/config")
+GLUE_JOB_NAME = _ssm_parameter(f"/{PROJECT_NAME}/{ENVIRONMENT}/glue_jobs/{GLUE_JOB_KEY}")
 
 
 class UnrecognizedSourceError(Exception):
@@ -39,8 +52,9 @@ class UnrecognizedSourceError(Exception):
 
 def _extract_bucket_and_key(event: dict[str, Any]) -> tuple[str, str]:
     detail = event["detail"]
-    request_params = detail["requestParameters"]
-    return request_params["bucketName"], request_params["key"]
+    # Object key names in S3 EventBridge notifications are URL-encoded (same as classic S3 event
+    # notifications), e.g. spaces become "+" -- decode before using the key for anything.
+    return detail["bucket"]["name"], unquote_plus(detail["object"]["key"])
 
 
 def _derive_source_name(raw_key: str) -> str:

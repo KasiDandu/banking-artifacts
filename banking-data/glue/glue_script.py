@@ -1,7 +1,7 @@
 """Glue Spark ETL job: config-driven validate -> transform -> load(mode) -> lineage -> crawler.
 
 Deployed as the Glue job's script, with `banking-data/common/` shipped alongside it via the
-job's `--extra-py-files` (see banking-infra/terraform/modules/banking-data/glue.tf), so
+job's `--extra-py-files` (see banking-terraform/terraform/modules/banking-data/glue.tf), so
 `common.config_loader` / `common.validation` / `common.load_modes` / `common.crawler` /
 `common.lineage` are importable as-is.
 
